@@ -1,0 +1,108 @@
+# ============================================================
+# YuE2-3B Phase-A training config (8 × A100-80GB, FSDP)
+# ============================================================
+# Usage:
+#   torchrun --nproc_per_node=8 src/train/main.py --config configs/yue2_3b.yaml
+# ============================================================
+name: yue2_3b_phase_a
+seed: 42
+output_dir: /data/t2music/runs/${name}
+
+# ---------- model ----------
+model:
+  name: yue2_3b
+  # For Phase A we use the open-source reference implementation from m-a-p.
+  # repo: https://github.com/m-a-p/YuE
+  pretrained: /data/t2music/pretrained/yue2_3b   # local path or HF identifier
+  dtype: bf16
+  # Phase A: only fine-tune the music generation head, freeze LLM backbone
+  freeze_backbone: true
+  lora:
+    enabled: false   # enable if memory pressure observed
+    r: 16
+    alpha: 32
+    target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+
+# ---------- data ----------
+data:
+  train:
+    # Primary: MusicCaps for text-music alignment
+    - type: csv_audio
+      audio_dir: /data/t2music/raw/musiccaps
+      csv_path: /data/t2music/raw/musiccaps/musiccaps.csv
+      csv_caption_column: caption
+      csv_id_column: ytid
+      ext: .wav
+      sampling_rate: 48000
+      duration: 10   # seconds
+      weight: 1.0
+    # Secondary: FMA weak-tagged pretraining
+    - type: dir_audio
+      audio_dir: /data/t2music/raw/fma/previews_30s
+      sampling_rate: 48000
+      duration: 10
+      weight: 0.3
+  val:
+    - type: csv_audio
+      audio_dir: /data/t2music/raw/musiccaps
+      csv_path: /data/t2music/raw/musiccaps/musiccaps.csv
+      csv_caption_column: caption
+      csv_id_column: ytid
+      ext: .wav
+      sampling_rate: 48000
+      duration: 10
+  num_workers: 16
+  prefetch_factor: 4
+  pin_memory: true
+  dataset_fingerprint:
+    - /data/t2music/_spec/musiccaps.fingerprint.json
+
+# ---------- training ----------
+training:
+  max_steps: 10000
+  warmup_steps: 500
+  batch_size_per_gpu: 4
+  grad_accum: 2
+  max_grad_norm: 1.0
+  adam:
+    lr: 5.0e-5
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+    weight_decay: 0.01
+  scheduler: cosine
+  checkpoint_every: 1000
+  resume: true
+  log_every: 100
+  eval_every: 500
+
+# ---------- distributed ----------
+distributed:
+  backend: nccl
+  fsdp: true
+  fsdp_sharding: full_shard   # ZeRO-3 across 8 GPUs
+  fsdp_cpu_offload: false
+  fsdp_mixed_precision: bf16
+  activation_checkpointing: true
+  compile: true               # torch.compile for A100
+
+# ---------- validation / generation ----------
+inference:
+  num_prompts_per_eval: 5
+  guidance_scale: 4.5
+  num_inference_steps: 50
+  seed: 42
+
+# ---------- logging ----------
+logging:
+  backend: wandb              # or 'mlflow' if W&B not available
+  project: t2music-phase-a
+  entity: t2music-team
+  log_dir: /data/t2music/logs/${name}
+  save_code: true
+  watch_model: false
+
+# ---------- reproducibility ----------
+reproducibility:
+  deterministic_algorithms: false
+  benchmark_cudnn: true
+  sha256_lock: true           # lock dataset fingerprint into checkpoint meta

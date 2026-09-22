@@ -1,0 +1,95 @@
+# ============================================================
+# T2Music Phase-A 8×A100 training job (K8s + MPI-Operator style)
+# ============================================================
+# Usage:
+#   kubectl apply -f k8s/submit_train.yaml
+#   kubectl logs -f job/t2music-train -n <namespace>
+#
+# Assumptions:
+#   - A Storage PVC named  t2music-pvc  mounted at /data/t2music
+#   - Image: your-registry.io/t2music:phase-a (built from docker/Dockerfile)
+#   - Cluster has ≥8 NVIDIA A100-80GB GPUs available
+# ============================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: t2music-train-yue2
+  namespace: t2music  # change to your namespace
+  labels:
+    project: t2music
+    phase: a
+    model: yue2_3b
+spec:
+  backoffLimit: 2           # auto-resume on transient node failure
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        project: t2music
+        job: train
+    spec:
+      restartPolicy: OnFailure
+      # ---- GPU scheduling ----
+      schedulerName: default-scheduler
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+      nodeSelector:
+        gpu-class: a100-80gb   # ← change to match your node labels
+      # ---- Image & resources ----
+      containers:
+        - name: t2music-train
+          image: your-registry.io/t2music:phase-a   # ← CHANGE
+          imagePullPolicy: IfNotPresent
+          command: ["/workspace/docker/entrypoint.sh", "train-yue2"]
+          args:
+            - "--config=/workspace/configs/yue2_3b.yaml"
+          env:
+            # torchrun  / distributed env
+            - name: MASTER_ADDR
+              value: "localhost"
+            - name: MASTER_PORT
+              value: "29500"
+            - name: NCCL_IB_DISABLE
+              value: "1"
+            - name: NCCL_DEBUG
+              value: "WARN"
+            - name: T2MUSIC_DATA_ROOT
+              value: "/data/t2music"
+            - name: WANDB_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: t2music-secrets
+                  key: wandb-api-key
+                  optional: true
+            - name: WANDB_MODE
+              value: "offline"     # set to "online" if outbound allowed
+          resources:
+            limits:
+              cpu: "64"
+              memory: "512Gi"
+              nvidia.com/gpu: 8
+            requests:
+              cpu: "32"
+              memory: "256Gi"
+              nvidia.com/gpu: 8
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: t2music-pvc     # ← CHANGE to your PVC name
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: "32Gi"
+      # K8s asks for GPU via resources — no need to set nvidia.com/gpu in env
+# ============================================================
+# To submit inference or eval jobs, duplicate this YAML with
+# command: ["/workspace/docker/entrypoint.sh", "infer-yue2"]
+# and reduce GPU request to 1 per pod if needed.
+# ============================================================

@@ -1,0 +1,41 @@
+# data
+/data/
+data/
+raw/
+pretrained/
+outputs/
+eval/
+logs/
+runs/
+wandb/
+mlruns/
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+!tests/**/*.wav
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# k8s secrets
+*k8s-secrets*.yaml
+*-secret*.yaml
